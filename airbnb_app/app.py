@@ -134,7 +134,7 @@ with st.expander("Show Listing Distribution and Map"):
         # Sample for performance (adjust if needed)
         map_df = df[['latitude', 'longitude']].sample(500)
 
-        st.write("📍 Map of Airbnb Listings")
+        st.write("Map of Airbnb Listings")
         st.pydeck_chart(pdk.Deck(
             initial_view_state=pdk.ViewState(
                 latitude=map_df['latitude'].mean(),
@@ -171,6 +171,85 @@ with st.expander("Show Listing Distribution and Map"):
 
     except FileNotFoundError:
         st.error("The file 'listings_combined.csv' is missing.")
+st.divider()
 
-st.markdown("---")
-st.markdown("Developed for CMPE 255 - Data Analytics Project · 2025")
+
+
+# Load clustered dataset
+with st.expander("Show Clustered Listings and Neighborhood Demographics"):
+    try:
+        df_clustered = pd.read_csv("airbnb_cluster.csv")  # Your processed file
+        df_clustered = df_clustered.dropna(subset=["latitude", "longitude", "cluster"])
+
+        # Predict cluster of the current input
+        kmeans = joblib.load("kmeans_model.pkl")  # If you saved it
+        cluster_input_features = ['bathrooms', 'beds', 'room_type_Private room', 'price',
+                                  'review_scores_rating', 'review_scores_cleanliness',
+                                  'review_scores_location', 'review_scores_value']
+        # Build cluster input from the same sidebar selections
+        input_for_cluster = {
+            'bathrooms': input_data['bathrooms'],
+            'beds': input_data['beds'],
+            'price': predicted_price,
+            'review_scores_rating': 4.5,
+            'review_scores_cleanliness': 4.5,
+            'review_scores_location': 4.5,
+            'review_scores_value': 4.5,
+            'room_type_Private room': 1 if room_type == 'Private room' else 0,
+        }
+
+        input_for_cluster = pd.DataFrame([input_for_cluster])
+        input_for_cluster = input_for_cluster.astype(np.float64)
+
+
+        umap_model = joblib.load('umap_model.pkl')
+        X_umap = umap_model.transform(input_for_cluster)
+
+        input_cluster = kmeans.predict(X_umap)[0]
+        cluster_label = df_clustered[df_clustered['cluster'] == input_cluster]['cluster_label'].iloc[0]
+
+        st.info(f"Based on your inputs, this listing most likely falls into **Cluster {cluster_label}**.")
+
+        # Show neighborhood stats by cluster
+        cluster_stats = df_clustered.groupby('cluster_label').agg({
+            'price': 'mean',
+            'beds': 'mean',
+            'room_type_Private room': 'mean',
+            'bathrooms': 'mean'
+        }).round(1)
+        st.write("**Average Stats by Cluster:**")
+        st.dataframe(cluster_stats)
+
+        # Color by cluster (assign each cluster a distinct color)
+        def cluster_color(cluster):
+            colors = [
+                [255, 0, 0], [0, 255, 0], [0, 0, 255],
+                [255, 165, 0], [128, 0, 128]
+            ]
+            return colors[cluster % len(colors)] + [160]
+
+        df_clustered['color'] = df_clustered['cluster'].apply(cluster_color)
+
+        st.write("**Map of Listings by Cluster**")
+        st.pydeck_chart(pdk.Deck(
+            initial_view_state=pdk.ViewState(
+                latitude=df_clustered['latitude'].mean(),
+                longitude=df_clustered['longitude'].mean(),
+                zoom=10,
+                pitch=0,
+            ),
+            layers=[
+                pdk.Layer(
+                    "ScatterplotLayer",
+                    data=df_clustered,
+                    get_position='[longitude, latitude]',
+                    get_color='color',
+                    get_radius=100,
+                    pickable=True,
+                )
+            ],
+            tooltip={"text": "Cluster: {cluster}\nPrice: ${price}"}
+        ))
+
+    except Exception as e:
+        st.error(f"Error loading clustered data: {e}")
